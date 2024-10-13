@@ -1,0 +1,184 @@
+<html>
+<head>
+    <meta charset="UTF-8"/>
+</head>
+<body>
+
+<script type="module">
+
+    import {NetworkBuilder} from "../src/net/netbuilder.js";
+    import {NetRunner} from "../src/net/netrunner.js";
+    import {Stats} from "../src/common/stats.js";
+    import * as Utils from "../src/common/utils.js"
+
+    function main() {
+        "use strict";
+        let canvas0 = document.getElementById("canvas0");
+        let context = canvas0.getContext('2d', {antialias: false});
+
+        let width = 256, height = 256;
+        let data = context.getImageData(0, 0, width, height);
+        //console.log(data);
+        //context.putImageData(data, 10, 10);
+
+        let canvas1 = document.getElementById("canvas1");
+        let context1 = canvas1.getContext('2d', {antialias: false});
+
+        let canvas2 = document.createElement("canvas");
+        let gl = canvas2.getContext('webgl2', {antialias: false});
+        if (gl == null) {
+            let gl1 = canvas2.getContext('webgl', {antialias: false});
+            if (gl1 == null) {
+                alert("dd");
+            }
+            alert("webgl 2 is not supported.");
+            return;
+        }
+        let ext = gl.getExtension('EXT_color_buffer_float');
+        if (!ext) {
+            alert("Warning: Float texture is not supported.");
+            return;
+        }
+
+
+        //runner.run(data);
+        let packed = false;
+        let nb = new NetworkBuilder(gl, packed);
+        nb.buildFromUrl("../src/models/handgesture/tracking/model_best.m", function () {
+            let network = nb.network;
+
+            let runner = new NetRunner(gl, packed);
+            runner.set_input(3, 128, 128, 3, 128, 128, network);
+            // runner.set_input(3, 256, 256, network);
+            runner.run(data, network);
+            //runner.prepare2(3, 256, 256, network, window.img_data);
+            //let image_data = runner.run2(network);
+            //data.data = image_data;
+            // let newCanvas = document.createElement("canvas");
+            // newCanvas.width = 64;
+            // newCanvas.height = 64;
+
+            //drawKeypoints(ctx, pose, 0.06, 3, 'red', 4);
+            //drawSkeleton(ctx, pose, 0.06, 'red', 2, 4);
+            // if(rects != null)
+            //     drawRect(context,rects[0].rect,'red', 2, 1);
+
+            // let pose_out = network.getOutputByName("v_358");
+            // let pose_feature = pose_out.rawData();
+            // let pose = Utils.findCandidateKeypoints(pose_feature,0.06,5,64,64,16);
+            // Utils.drawSkeleton(context, pose, 0.06, 'red', 2, 8);
+
+            // newCanvas.getContext("2d").putImageData(image_data, 0, 0);
+            // context1.scale(4, 4);
+            // context1.drawImage(newCanvas, 0, 0);
+        });
+
+    }
+
+    function down_json(path) {
+        let xhr = new XMLHttpRequest();
+        xhr.responseType = 'json';
+        xhr.onload = function () {
+            let data = xhr.response;
+            let arr = Object.keys(data);
+            let temp_data = new Float32Array(arr.length);
+            for (let key in data) {
+                temp_data[parseInt(key)] = parseFloat(data[key]);
+            }
+            window.layer_test_data = temp_data;
+        }
+        xhr.open("GET", path, true);
+        xhr.send();
+    }
+
+
+    function down_image_torch(path = './json/image.json') {
+        let xhr = new XMLHttpRequest();
+        xhr.responseType = 'json';
+        xhr.onload = function () {
+            let data = xhr.response;
+            let arr = Object.keys(data);
+            let img_data = new Float32Array(arr.length);
+            for (let key in data) {
+                img_data[parseInt(key)] = parseFloat(data[key]);
+            }
+            window.layer0data = img_data;
+            let raw_data = new Uint8ClampedArray(256 * 256 * 4);
+            for (let h = 0; h < 256; h++) {
+                for (let w = 0; w < 256; w++) {
+                    // let index = h * 256 + w;
+                    // //chw 2 hwc
+                    // raw_data[h * 256 * 4 + w * 4 + 0] = img_data[0 * 256 * 256 + h * 256 + w] * 255;
+                    // raw_data[h * 256 * 4 + w * 4 + 1] = img_data[1 * 256 * 256 + h * 256 + w] * 255;
+                    // raw_data[h * 256 * 4 + w * 4 + 2] = img_data[2 * 256 * 256 + h * 256 + w] * 255;
+                    // raw_data[h * 256 * 4 + w * 4 + 3] = 255;
+
+                    raw_data[h * 256 * 4 + w * 4 + 0] = img_data[0 * 256 * 256 + h * 256 + w] * 255;
+                    raw_data[h * 256 * 4 + w * 4 + 1] = img_data[1 * 256 * 256 + h * 256 + w] * 255;
+                    raw_data[h * 256 * 4 + w * 4 + 2] = img_data[2 * 256 * 256 + h * 256 + w] * 255;
+                    raw_data[h * 256 * 4 + w * 4 + 3] = 255;
+                }
+            }
+            let image_data = new ImageData(raw_data, 256, 256);
+            let canvas = document.getElementById("canvas0");
+            let context = canvas.getContext("2d");
+            context.putImageData(image_data, 0, 0);
+
+
+        }
+        xhr.open("GET", path, true);
+        xhr.send();
+    }
+
+    function download_feature_files(url) {
+        let arr = Array.from({length: 137}, (v, k) => k);
+        const promises = arr.map(function (id) {
+            let path = url + id + '.json';
+            return Utils.getJSON(path);
+        });
+
+        Promise.all(promises).then(function (jsons) {
+            let layer_feature_data = new Array(jsons.length);
+            jsons.forEach(function (feature_data, index) {
+                let arr = Object.keys(feature_data);
+                let data = new Float32Array(arr.length);
+                for (let key in feature_data) {
+                    data[parseInt(key)] = parseFloat(feature_data[key]);
+                }
+                layer_feature_data[index] = data;
+            });
+
+            window.layer_feature_data = layer_feature_data;
+
+            console.log('feature data has been loaded!');
+            main();
+
+        }).catch(function (error) {
+            console.log(error);
+        });
+    }
+
+    download_feature_files('../model_trans_scripts/hand_gesture/model_trans_hand_gesture/hand_tracking/net_out/LayerID');
+
+</script>
+<table border="1">
+    <tr>
+        <td>
+            <canvas id="canvas0" width="256px" height="256px"></canvas>
+        </td>
+        <td>
+            <canvas id="canvas1" width="256px" height="256px"></canvas>
+        </td>
+    </tr>
+    <tr>
+        <td><input type="button" onclick="download()" value="下载图像"/></td>
+        <td><input type="button" onclick="main()" value="检测"/></td>
+    </tr>
+    <tr>
+        <td colspan="2" height="100px"><textarea style="width:100%;height:100%;" id="output_window">输出：</textarea></td>
+    </tr>
+</table>
+注1："下载图像"从服务器端下载目标图像<br>
+注2："检测"包括3步：（1）从服务器端下载15MB的模型文件；（2）解析模型，建立网络；（3）运行
+</body>
+</html>

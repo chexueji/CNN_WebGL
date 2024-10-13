@@ -1,0 +1,319 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport'
+          content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
+    <title>HandDetection Demo</title>
+    <style type='text/css'>
+        #fps {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        #cnn {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        #handtype {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: center;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        .footer {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            color: black;
+        }
+
+        .footer-text {
+            max-width: 600px;
+            text-align: center;
+            margin: auto;
+        }
+
+        body {
+            text-align: center;
+        }
+    </style>
+</head>
+<!--<body onload='main()'>-->
+<body>
+<div id='info' style='display:none'>
+</div>
+<div id='loading' style='display:block'>
+    Loading the model...
+</div>
+<div id='main' style='display:none; position: relative; width:256px; height:256px; margin: 0 auto; '>
+    <video id='video' style=' -moz-transform: scaleX(-1);
+             -o-transform: scaleX(-1);
+             -webkit-transform: scaleX(-1);
+            transform: scaleX(-1);
+            display: none;
+            '>
+    </video>
+    <canvas id='output'></canvas>
+    <div id='fps'
+         style='position: absolute; top: 0px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>fps:
+    </div>
+    <div id='cnn'
+         style='position: absolute; top: 21px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>cnn:0
+        ms
+    </div>
+    <div id='handtype'
+         style='position: absolute; top: 0px; left: 100px; opacity: 0.7; height: 20px; width: 100px;display: none;'>
+    </div>
+</div>
+<div id='detect' style='display:block'>
+    <p>
+        <button type='button' onclick='main()'>Detect</button>
+    </p>
+</div>
+
+<div class='footer'>
+    <div class='footer-text'>
+        <p>
+            Hand Detection Demo with a <strong>hand</strong> detection algorithm.
+            <br>
+            <br> 此为手势检测Demo.
+        </p>
+    </div>
+</div>
+</body>
+<script type='module'>
+    import {SSD, SSDParams, PriorBoxParams} from '../src/net/ssd.js'
+    import {NetworkBuilder} from "../src/net/netbuilder.js";
+    import {NetRunner} from "../src/net/netrunner.js";
+    import {Stats} from "../src/common/stats.js";
+    import * as Utils from "../src/common/utils.js"
+    import {Rect} from "../src/common/types.js"
+
+    function detectHand(video, videoWidth, videoHeight, detection_networkBuilder, tracking_networkBuilder, gl) {
+        const canvas = document.getElementById('output');
+        const ctx = canvas.getContext('2d', {antialias: false});
+        window.fps = document.getElementById('fps');
+        window.cnn = document.getElementById('cnn');
+        window.hand_gesture_type = document.getElementById('handtype');
+
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        let videoChannel = 3;
+        //detection
+        let detectionModelInputChannel = 3;
+        let detectionModelInputWidth = 256;
+        let detectionModelInputHeight = 256;
+
+        let stats = new Stats();
+        let packed = false;
+        let detection_network = detection_networkBuilder.network;
+        //SSD input range [0.0-4.0]
+        let detection_input_scale = 4.0;
+        let detection_input_trans = 0.0;
+
+        let detection_runner = new NetRunner(gl, packed, detection_input_scale, detection_input_trans);
+
+        let ssd_params = new SSDParams(0.4, 0.6, 4, 2, 6, 4);//0.1,0.45
+        let prior_box_params = new PriorBoxParams([16, 8, 4, 2, 1], 256, [16, 32, 64, 128, 256], [0.05, 0.15, 0.35, 0.55, 0.75], [0.2, 0.3, 0.5, 0.7, 0.9], [[1.5, 2], [1.5, 2], [1.5, 2], [1.5, 2], [1.5, 2]], [0.1, 0.2], true);
+        let ssd = new SSD(ssd_params, prior_box_params);
+        detection_runner.set_input(videoChannel, videoHeight, videoWidth, detectionModelInputChannel, detectionModelInputHeight, detectionModelInputWidth, detection_network);
+
+        //tracking
+        let trackingModelInputChannel = 3;
+        let trackingModelInputWidth = 128;
+        let trackingModelInputHeight = 128;
+
+        let tracking_network = tracking_networkBuilder.network;
+        //tracking input range [0.0-1.0]
+        let tracking_input_scale = 1.0;
+        let tracking_input_trans = 0.0;
+
+        let tracking_runner = new NetRunner(gl, packed, tracking_input_scale, tracking_input_trans);
+
+        tracking_runner.set_input(videoChannel, videoHeight, videoWidth, trackingModelInputChannel, trackingModelInputHeight, trackingModelInputWidth, tracking_network);
+
+        let hand_gesture_type = ['Five','Heart','Great','Congratulation','666','Lift','Victory','Pointer','Heart2','OK','Fist','Eight','Zero','FaceHolding','FaceHolding SingleHand','Talk','Talk SingleHand','Hand'];
+        console.log('hand detect and tracking begin!');
+
+        async function handDetectRender() {
+            ctx.clearRect(0, 0, videoWidth, videoHeight);
+            //show video
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-videoWidth, 0);
+            stats.begin();
+            ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
+            stats.end();
+            // console.log('draw image time:' + stats.RunTime.toFixed(3) + ' ms');
+            ctx.restore();
+            stats.begin();
+            let data = ctx.getImageData(0, 0, videoWidth, videoHeight);
+            stats.end();
+            // console.log('get image time:' + stats.RunTime.toFixed(3) + 'ms');
+            // detection
+            let t_ssd_start = performance.now();
+            detection_runner.run(data, detection_network);
+
+            // detection post process
+            let loc_out = detection_network.getOutputByName("v_249");
+            let conf_out = detection_network.getOutputByName("v_250");
+            let loc_feature = loc_out.rawData();
+            let conf_feature = conf_out.rawData();
+
+            let landmark_rects = ssd.detection(loc_feature, conf_feature);
+            let t_ssd_end = performance.now();
+
+            if(landmark_rects != null) {
+                for(let i = 0;i < landmark_rects.length; i++) {
+                    Utils.drawRect(ctx, landmark_rects[i].rect, 'red', 2, 2);
+                }
+            }
+
+            // tracking
+            let t_tracking_start = performance.now();
+            tracking_runner.run(data, tracking_network);
+            // tracking post process
+            let hand_classes_out = tracking_network.getOutputByName("v_134");// 22 classes
+            let binary_class_out = tracking_network.getOutputByName("v_135");// binary class
+            let bbox_out = tracking_network.getOutputByName("v_136");// bounding box
+            let hand_classes_feature = hand_classes_out.rawData();
+            let binary_class_feature = binary_class_out.rawData();//0:background 1:hand
+            let bbox_feature = bbox_out.rawData();
+
+            let t_tracking_end = performance.now();
+
+            let hand_classes_conf = hand_classes_feature.slice(1,-1);
+
+            if(binary_class_feature[1] >= 0.5) {
+
+                //22 classes:calculate softmax
+                let num_hand_classes = hand_classes_feature.length;
+                let hand_classes_max_id = 1 // 0: background
+                let hand_classes_max_conf = hand_classes_feature[hand_classes_max_id];
+
+                for(let conf_id = 2; conf_id < num_hand_classes; conf_id++)
+                {
+                    if(hand_classes_feature[conf_id] > hand_classes_max_conf)
+                    {
+                        hand_classes_max_conf = hand_classes_feature[conf_id];
+                        hand_classes_max_id = conf_id;
+                    }
+                }
+                hand_classes_max_id -= 1;// remove background
+
+                let sum_exp = 0;
+                for(let conf_id = 0; conf_id < num_hand_classes; conf_id++)
+                {
+                    sum_exp += Math.exp(hand_classes_feature[conf_id]);
+                }
+                hand_classes_max_conf = Math.exp(hand_classes_max_conf) / sum_exp;
+
+                let id_hand_gesture_rotated = [1,6,7,4];
+                if(hand_classes_max_id >= 18 && hand_classes_max_id < num_hand_classes)
+                {
+                    hand_classes_max_id = id_hand_gesture_rotated[hand_classes_max_id - 18];
+                }
+
+                for(let conf_id = 0; conf_id < id_hand_gesture_rotated.length; conf_id++)
+                {
+                    hand_classes_conf[id_hand_gesture_rotated[conf_id]] = Math.max(hand_classes_conf[id_hand_gesture_rotated[conf_id]],hand_classes_conf[18+conf_id]);
+                }
+                if(hand_classes_max_conf >= 0.4) {
+                    console.log('Hand Gesture Type:', hand_gesture_type[hand_classes_max_id]);
+                    window.hand_gesture_type.innerHTML = hand_gesture_type[hand_classes_max_id];
+                }else
+                {
+                    window.hand_gesture_type.innerHTML = "";
+                }
+
+                // let left = bbox_feature[0] * trackingModelInputWidth;
+                // let top = bbox_feature[1] * trackingModelInputHeight;
+                // let right = bbox_feature[2] * trackingModelInputWidth;
+                // let bottom = bbox_feature[3] * trackingModelInputHeight;
+                // let bbox = new Rect(left, top, (right - left), (bottom - top));
+                // Utils.drawRect(ctx, bbox, 'red', 2, 4);
+            }
+
+            window.cnn.innerHTML = 'cnn: ' + ((t_ssd_end - t_ssd_start).toFixed(1) + (t_tracking_end - t_tracking_start).toFixed(1)) + ' ms';
+
+            stats.updateFPS();
+            window.fps.innerHTML = 'fps: ' + stats.FPS + '->' + stats.ElapsedTime + ' ms';
+            requestAnimationFrame(handDetectRender);
+        }
+
+        handDetectRender();
+    }
+
+
+
+    function main() {
+
+        const videoWidth = 512;
+        const videoHeight = 512;
+
+        let gl = Utils.checkWebGL();
+        if (!gl)
+            return;
+        Utils.checkBrowerSupport();
+
+        window.navigator.getUserMedia = navigator.getUserMedia ||
+            navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+        let packed = false;
+        let detection_netbuilder = new NetworkBuilder(gl, packed);
+        let tracking_netbuilder = new NetworkBuilder(gl, packed);
+        detection_netbuilder.buildFromUrl('../src/models/handgesture/ssd/test.m', async function () {
+            tracking_netbuilder.buildFromUrl('../src/models/handgesture/tracking/test.m', async function () {
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('main').style.display = 'block';
+                document.getElementById('detect').style.display = 'none';
+
+                let video;
+                try {
+                    video = await Utils.loadVideo(videoWidth, videoHeight);
+                } catch (e) {
+                    let info = document.getElementById('info');
+                    info.textContent = 'This browser does not support video capture, or this device does not have a camera';
+                    info.style.display = 'block';
+                    throw e;
+                }
+                document.getElementById('fps').style.display = 'block';
+                document.getElementById('cnn').style.display = 'block';
+                document.getElementById('handtype').style.display = 'block';
+                detectHand(video, videoWidth, videoHeight, detection_netbuilder, tracking_netbuilder, gl);
+            });
+        });
+    }
+    main();
+</script>
+</html>
