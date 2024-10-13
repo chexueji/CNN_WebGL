@@ -10,7 +10,7 @@ How to run
 
 Note
 ------------
-There are no model files, may upload the model files soon or later.
+There are no model files, may upload the model files soon.
 
 # License
 Apache 2.0
