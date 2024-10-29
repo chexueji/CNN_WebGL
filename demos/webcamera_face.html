@@ -1,0 +1,265 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport'
+          content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
+    <title>FaceDetection Demo</title>
+    <style type='text/css'>
+        #fps {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        #cnn {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        .footer {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            color: black;
+        }
+
+        .footer-text {
+            max-width: 600px;
+            text-align: center;
+            margin: auto;
+        }
+
+        body {
+            text-align: center;
+        }
+    </style>
+</head>
+<!--<body onload='main()'>-->
+<body>
+<div id='info' style='display:none'>
+</div>
+<div id='loading' style='display:block'>
+    Loading the model...
+</div>
+<div id='main' style='display:none; position: relative; width:256px; height:256px; margin: 0 auto; '>
+    <video id='video' style=' -moz-transform: scaleX(-1);
+             -o-transform: scaleX(-1);
+             -webkit-transform: scaleX(-1);
+            transform: scaleX(-1);
+            display: none;
+            '>
+    </video>
+    <canvas id='output'></canvas>
+    <div id='fps'
+         style='position: absolute; top: 0px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>fps:
+    </div>
+    <div id='cnn'
+         style='position: absolute; top: 21px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>cnn:0
+        ms
+    </div>
+</div>
+<div id='detect' style='display:block'>
+    <p>
+        <button type='button' onclick='main()'>Detect</button>
+    </p>
+</div>
+
+<div class='footer'>
+    <div class='footer-text'>
+        <p>
+            Face Detection Demo with a <strong>single-face</strong> detection algorithm.
+            <br>
+            <br> 此为人脸SSD检测Demo.
+        </p>
+    </div>
+</div>
+</body>
+<script type='module'>
+    import {SSD, SSDParams, PriorBoxParams} from '../src/net/ssd.js'
+    import {NetworkBuilder} from "../src/net/netbuilder.js";
+    import {NetRunner} from "../src/net/netrunner.js";
+    import {Vector2D} from "../src/common/types.js";
+    import {Stats} from "../src/common/stats.js";
+    import * as Utils from "../src/common/utils.js"
+
+    function detectFace(video, videoWidth, videoHeight, detection_networkBuilder, landmark_networkBuilder, gl) {
+        const canvas = document.getElementById('output');
+        const ctx = canvas.getContext('2d', {antialias: false});
+        window.fps = document.getElementById('fps');
+        window.cnn = document.getElementById('cnn');
+
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        let videoChannel = 3;
+        //ssd
+        let detectionModelInputChannel = 1;
+        let detectionModelInputWidth = 256;
+        let detectionModelInputHeight = 256;
+
+        let stats = new Stats();
+        let packed = false;
+        let detection_network = detection_networkBuilder.network;
+
+        //SSD and Landmark input range [0.0-4.0]
+        let input_scale = 4.0;
+        let input_trans = 0.0;
+
+        let ssd_runner = new NetRunner(gl, packed, input_scale, input_trans);
+
+        let ssd_params = new SSDParams(0.4, 0.6, 4, 2, 6, 4);
+        let prior_box_params = new PriorBoxParams([16, 8, 5, 3, 1], 256, [16, 32, 51.2, 85.3, 256], [0.1, 0.2, 0.4, 0.6, 0.8], [0.2, 0.4, 0.6, 0.8, 1], [[2, 3], [2, 3], [2, 3], [2, 3], [2, 3]], [0.1, 0.2], true);
+        let ssd = new SSD(ssd_params, prior_box_params);
+        ssd_runner.set_input(videoChannel, videoHeight, videoWidth, detectionModelInputChannel, detectionModelInputHeight, detectionModelInputWidth, detection_network);
+
+        //landmark
+        let landmarkModelInputChannel = 1;
+        let landmarkModelInputWidth = 128;
+        let landmarkodelInputHeight = 128;
+        let landmark_network = landmark_networkBuilder.network;
+        let landmark_runner = new NetRunner(gl, packed, input_scale, input_trans);
+        landmark_runner.set_input(videoChannel, videoHeight, videoWidth, landmarkModelInputChannel, landmarkodelInputHeight, landmarkModelInputWidth, landmark_network);
+
+        console.log('face detect begin!');
+
+        async function faceDetectRender() {
+            ctx.clearRect(0, 0, videoWidth, videoHeight);
+            //show video
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-videoWidth, 0);
+            stats.begin();
+            ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
+            stats.end();
+            // console.log('draw image time:' + stats.RunTime.toFixed(3) + ' ms');
+            ctx.restore();
+            stats.begin();
+            let data = ctx.getImageData(0, 0, videoWidth, videoHeight);
+            let faces_crop_data = new Array();
+            stats.end();
+            // console.log('get image time:' + stats.RunTime.toFixed(3) + 'ms');
+            /////////////////////////////////////////////////////////
+            //step1: ssd
+            let t_ssd_start = performance.now();
+            ssd_runner.run(data, detection_network);
+            //detetion post process
+            let loc_out = detection_network.getOutputByName("v_137");
+            let conf_out = detection_network.getOutputByName("v_138");
+            let loc_feature = loc_out.rawData();
+            let conf_feature = conf_out.rawData();
+
+            let landmark_rects = ssd.detection(loc_feature, conf_feature);
+            let t_ssd_end = performance.now();
+
+            if(landmark_rects != null) {
+                for(let i = 0;i < landmark_rects.length; i++) {
+                    Utils.drawRect(ctx, landmark_rects[i].rect, 'red', 2, 2);
+                    faces_crop_data.push(ctx.getImageData(landmark_rects[i].rect.left, landmark_rects[i].rect.top, landmark_rects[i].rect.width, landmark_rects[i].rect.height));
+                }
+            }
+
+            /////////////////////////////////////////////////////////
+            //step2: landmark
+            let t_landmark_start = performance.now();
+            landmark_runner.run(data, landmark_network);
+            //landmark post process
+            let landmark_out = landmark_network.getOutputByName("v_197");
+            let classes_out = landmark_network.getOutputByName("v_208");
+            let landmark_feature = landmark_out.rawData();
+            let classes_feature = classes_out.rawData();
+
+            let sum_exp = 0.0;
+            for (let cls_id = 0; cls_id < 2; cls_id++) {
+                classes_feature[cls_id] = Math.exp(classes_feature[cls_id]);
+                sum_exp += classes_feature[cls_id];
+            }
+
+            for (let i = 0; i < classes_feature.length; i++) {
+                classes_feature[i] /= sum_exp;
+            }
+
+            let landmarks = new Array();
+            for(let i = 0;i < landmark_feature.length; i += 2)
+            {
+                let point = new Vector2D(landmark_feature[i]/64.0,landmark_feature[i+1]/64.0);
+                landmarks.push(point);
+            }
+            let t_landmark_end = performance.now();
+            window.cnn.innerHTML = 'cnn: ' + ((t_landmark_end - t_landmark_start).toFixed(1)+(t_ssd_end - t_ssd_start).toFixed(1)) + ' ms';
+
+            if(classes_feature[1] > 0.5) {
+                for (let i = 0; i < landmarks.length; i++) {
+                    let landmark = landmarks[i];
+                    Utils.drawPoint(ctx, videoWidth * landmark.x, videoHeight * landmark.y, 4, 'red');
+                }
+            }
+            stats.updateFPS();
+            fps.innerHTML = 'fps: ' + stats.FPS + '->' + stats.ElapsedTime + ' ms';
+            requestAnimationFrame(faceDetectRender);
+        }
+
+        faceDetectRender();
+    }
+
+
+
+    function main() {
+
+        const videoWidth = 512;
+        const videoHeight = 512;
+
+        let gl = Utils.checkWebGL();
+        if (!gl)
+            return;
+        Utils.checkBrowerSupport();
+
+        window.navigator.getUserMedia = navigator.getUserMedia ||
+            navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+        let packed = false;
+        let detetion_netbuilder = new NetworkBuilder(gl, packed);
+        let landmark_netbuilder = new NetworkBuilder(gl, packed);
+        detetion_netbuilder.buildFromUrl('../src/models/ssd/test.m', async function () {
+
+            landmark_netbuilder.buildFromUrl('../src/models/landmarks/test.m', async function () {
+
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('main').style.display = 'block';
+                document.getElementById('detect').style.display = 'none';
+
+                let video;
+                try {
+                    video = await Utils.loadVideo(videoWidth, videoHeight);
+                } catch (e) {
+                    let info = document.getElementById('info');
+                    info.textContent = 'This browser does not support video capture, or this device does not have a camera';
+                    info.style.display = 'block';
+                    throw e;
+                }
+                document.getElementById('fps').style.display = 'block';
+                document.getElementById('cnn').style.display = 'block';
+                detectFace(video, videoWidth, videoHeight, detetion_netbuilder, landmark_netbuilder, gl);
+            });
+        });
+    }
+    main();
+</script>
+</html>

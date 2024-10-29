@@ -1,0 +1,197 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset='UTF-8'>
+    <meta name='viewport'
+          content='width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0'>
+    <title>PoseDetection Demo</title>
+    <style type='text/css'>
+        #fps {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        #cnn {
+            position: absolute;
+            left: 0px;
+            right: 0px;
+            width: 100px;
+            height: 20px;
+            background-color: #686868;
+            font-size: 50%;
+            color: #00FF00;
+            text-align: left;
+            opacity: 0.7;
+            filter: alpha(opacity=70);
+        }
+
+        .footer {
+            position: fixed;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            color: black;
+        }
+
+        .footer-text {
+            max-width: 600px;
+            text-align: center;
+            margin: auto;
+        }
+
+        body {
+            text-align: center;
+        }
+    </style>
+</head>
+<!--<body onload='main()'>-->
+<body>
+<div id='info' style='display:none'>
+</div>
+<div id='loading' style='display:block'>
+    Loading the model...
+</div>
+<div id='main' style='display:none; position: relative; width:256px; height:256px; margin: 0 auto; '>
+    <video id='video' style=' -moz-transform: scaleX(-1);
+             -o-transform: scaleX(-1);
+             -webkit-transform: scaleX(-1);
+            transform: scaleX(-1);
+            display: none;
+            '>
+    </video>
+    <canvas id='output'></canvas>
+    <div id='fps'
+         style='position: absolute; top: 0px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>fps:
+    </div>
+    <div id='cnn'
+         style='position: absolute; top: 21px; left: 0px; opacity: 0.7; height: 20px; width: 100px;display: none;'>cnn:0
+        ms
+    </div>
+</div>
+<div id='detect' style='display:block'>
+    <p>
+        <button type='button' onclick='main()'>Detect</button>
+    </p>
+</div>
+
+<div class='footer'>
+    <div class='footer-text'>
+        <p>
+            Pose Detection Demo with a <strong>human pose</strong> detection algorithm.
+            <br>
+            <br> 此为人体Pose检测Demo.
+        </p>
+    </div>
+</div>
+</body>
+<script type='module'>
+
+    import {NetworkBuilder} from "../src/net/netbuilder.js";
+    import {NetRunner} from "../src/net/netrunner.js";
+    import {Stats} from "../src/common/stats.js";
+    import * as Utils from "../src/common/utils.js"
+
+    function detectPose(video, videoWidth, videoHeight, networkBuilder, gl) {
+        const canvas = document.getElementById('output');
+        const ctx = canvas.getContext('2d', {antialias: false});
+        window.fps = document.getElementById('fps');
+        window.cnn = document.getElementById('cnn');
+
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        let videoChannel = 3;
+        let modelInputChannel = 3;
+        let modelInputWidth = 256;
+        let modelInputHeight = 256;
+
+        let stats = new Stats();
+        let packed = false;
+        let network = networkBuilder.network;
+        let runner = new NetRunner(gl, packed);
+        runner.set_input(videoChannel, videoHeight, videoWidth, modelInputChannel, modelInputHeight, modelInputWidth, network);
+        console.log('human pose detect begin!');
+
+        async function poseDetectRender() {
+            ctx.clearRect(0, 0, videoWidth, videoHeight);
+            //show video
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.translate(-videoWidth, 0);
+            stats.begin();
+            ctx.drawImage(video, 0, 0, videoWidth, videoHeight);
+            stats.end();
+            // console.log('draw image time:' + stats.RunTime.toFixed(3) + ' ms');
+            ctx.restore();
+            stats.begin();
+            let data = ctx.getImageData(0, 0, videoWidth, videoHeight);
+            stats.end();
+            // console.log('get image time:' + stats.RunTime.toFixed(3) + 'ms');
+            // run network
+            runner.run(data, network);
+            // post process
+            let t_pose_post_st = performance.now();
+            let pose_out = network.getOutputByName("v_358");
+            let pose_feature = pose_out.rawData();
+            let pose = Utils.findCandidateKeypoints(pose_feature,0.039,8,64,64,16); //0.039 = 10/255
+            Utils.drawSkeleton(ctx, pose, 0.039, 'red', 2, 8);
+
+            let t_pose_post_ed = performance.now();
+            window.cnn.innerHTML = 'cnn: ' + (t_pose_post_ed - t_pose_post_st).toFixed(1) + ' ms';
+
+            stats.updateFPS();
+            fps.innerHTML = 'fps: ' + stats.FPS + '->' + stats.ElapsedTime + ' ms';
+            requestAnimationFrame(poseDetectRender);
+        }
+
+        poseDetectRender();
+    }
+
+
+    function main() {
+
+        const videoWidth = 512;
+        const videoHeight = 512;
+
+        let gl = Utils.checkWebGL();
+        if (!gl)
+            return;
+        Utils.checkBrowerSupport();
+
+        window.navigator.getUserMedia = navigator.getUserMedia ||
+            navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+        let packed = false;
+        let nb = new NetworkBuilder(gl, packed);
+        nb.buildFromUrl('../src/models/pose/test.m', async function () {
+            //nb.network.rebuild();
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('main').style.display = 'block';
+            document.getElementById('detect').style.display = 'none';
+
+            let video;
+            try {
+                video = await Utils.loadVideo(videoWidth, videoHeight);
+            } catch (e) {
+                let info = document.getElementById('info');
+                info.textContent = 'This browser does not support video capture, or this device does not have a camera';
+                info.style.display = 'block';
+                throw e;
+            }
+            document.getElementById('fps').style.display = 'block';
+            document.getElementById('cnn').style.display = 'block';
+            detectPose(video, videoWidth, videoHeight, nb, gl);
+        });
+    }
+
+    main();
+</script>
+</html>
